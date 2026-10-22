@@ -5,15 +5,16 @@
 body{margin:0;font:14px system-ui;background:#111;color:#eee}header{background:#1b2a3a;padding:8px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 h1{font-size:17px;margin:0;flex:1}button,select,input,textarea{font:inherit;background:#222;color:#eee;border:1px solid #444;border-radius:6px;padding:6px}
 button{cursor:pointer;background:#2d4f6c}main{display:grid;grid-template-columns:320px 1fr;gap:10px;padding:10px}
-@media(max-width:800px){main{grid-template-columns:1fr}}
+@media(max-width:800px){main{grid-template-columns:1fr}#view{order:-1;position:sticky;top:0;z-index:5;background:#111;padding-bottom:4px}#cmp{width:fit-content;max-width:100%;margin:auto}#cmp canvas{width:auto;max-width:100%;max-height:42vh}}
 fieldset{border:1px solid #333;border-radius:8px;margin:0 0 8px}label{display:flex;justify-content:space-between;gap:6px;margin:4px 0;align-items:center}
-label input[type=range]{flex:1}.note{font-size:12px;color:#aaa}#cmp{position:relative;overflow:hidden;background:#000;touch-action:none;user-select:none}
-#cmp canvas{display:block;max-width:100%;height:auto}#before{position:absolute;left:0;top:0;width:100%}#beforeWrap{position:absolute;inset:0;overflow:hidden;width:50%;border-right:2px solid #6cf}
+label input[type=range]{flex:1}.note{font-size:12px;color:#aaa}#cmp{position:relative;overflow:hidden;background:#000;touch-action:pan-y;user-select:none;cursor:ew-resize}
+#cmp canvas{display:block;width:100%;height:auto}#before{position:absolute;left:0;top:0;width:100%;height:100%;clip-path:inset(0 50% 0 0)}#divider{position:absolute;top:0;bottom:0;left:50%;width:3px;margin-left:-1px;background:#6cf;pointer-events:none}.tagl,.tagr{position:absolute;top:4px;font-size:11px;background:#0008;padding:2px 5px;border-radius:4px;pointer-events:none}.tagl{left:4px}.tagr{right:4px}#updateBar{background:#fc6;color:#000;padding:8px;text-align:center}#autoBtn{width:100%;font-size:16px;padding:10px;background:#2a7a3a;margin-bottom:8px}
 #hash{word-break:break-all;font-family:monospace;font-size:11px}.warn{color:#fc6}</style></head><body>
-<header><h1>Still Enhancer</h1><button id="installBtn" hidden>Install to phone</button>
+<div id="updateBar" hidden>Update available. <button id="updateBtn">Reload</button></div><header><h1>Still Enhancer</h1><button id="installBtn" hidden>Install to phone</button>
 <input type="file" id="file" accept="image/*" multiple><button id="export" disabled>Export ZIP</button></header>
 <p class="note" style="padding:0 12px">Runs entirely on this device; images are never uploaded. Image enhancement only — no identification features.</p>
-<main><section>
+<main><section><button id="autoBtn">✨ Auto enhance</button><div id="autoNote" class="note"></div>
+
 <fieldset><legend>Case</legend><label>Case #<input id="m_case"></label><label>Examiner<input id="m_exam"></label>
 <textarea id="m_notes" rows="2" style="width:95%" placeholder="Case notes"></textarea></fieldset>
 <fieldset><legend>This still <select id="cur"></select></legend>
@@ -34,16 +35,24 @@ label input[type=range]{flex:1}.note{font-size:12px;color:#aaa}#cmp{position:rel
 <fieldset><legend>Tone</legend>
 <label>Brightness<input id="bri" type="range" min="-100" max="100" value="0"><span></span></label>
 <label>Contrast<input id="con" type="range" min="-100" max="100" value="0"><span></span></label>
-<label>Gamma<input id="gam" type="range" min="0.2" max="3" step="0.05" value="1"><span></span></label>
+<label>Gamma<input id="gam" type="range" min="0.2" max="3" step="0.01" value="1"><span></span></label>
 <label>Levels black<input id="lb" type="range" min="0" max="254" value="0"><span></span></label>
 <label>Levels white<input id="lw" type="range" min="1" max="255" value="255"><span></span></label>
+<label>WB red gain<input id="wbr" type="range" min="0.5" max="2" step="0.01" value="1"><span></span></label>
+<label>WB green gain<input id="wbg" type="range" min="0.5" max="2" step="0.01" value="1"><span></span></label>
+<label>WB blue gain<input id="wbb" type="range" min="0.5" max="2" step="0.01" value="1"><span></span></label>
+<label>Local contrast (CLAHE)<input id="clahe" type="range" min="0" max="4" step="0.1" value="0"><span></span></label>
+<details><summary class="note">Per-channel levels</summary>
+<label>R black<input id="rlo" type="range" min="0" max="254" value="0"><span></span></label><label>R white<input id="rhi" type="range" min="1" max="255" value="255"><span></span></label>
+<label>G black<input id="glo" type="range" min="0" max="254" value="0"><span></span></label><label>G white<input id="ghi" type="range" min="1" max="255" value="255"><span></span></label>
+<label>B black<input id="blo" type="range" min="0" max="254" value="0"><span></span></label><label>B white<input id="bhi" type="range" min="1" max="255" value="255"><span></span></label></details>
 <label>Grayscale<input id="gray" type="checkbox"></label><label>Histogram equalize<input id="heq" type="checkbox"></label></fieldset>
 <fieldset><legend>Detail</legend>
 <label>Denoise (median r)<input id="dn" type="range" min="0" max="3" value="0"><span></span></label>
 <label>Unsharp amount<input id="usa" type="range" min="0" max="3" step="0.1" value="0"><span></span></label>
 <label>Unsharp radius<input id="usr" type="range" min="1" max="5" value="1"><span></span></label></fieldset>
 <button id="reset">Reset adjustments</button></section>
-<section><div id="cmp"><canvas id="after"></canvas><div id="beforeWrap"><canvas id="before"></canvas></div></div>
+<section id="view"><div id="cmp"><canvas id="after"></canvas><canvas id="before"></canvas><div id="divider"></div><span class="tagl">Before</span><span class="tagr">After</span></div>
 <label>Before / after<input id="slider" type="range" min="0" max="100" value="50"></label><div id="status" class="note"></div></section></main>
 <section id="board" style="padding:10px"><h2>Case board</h2>
 <h3>Timeline <select id="sortBy"><option value="dt">by date/time</option><option value="cam">by camera</option><option value="addr">by location</option><option value="idx">by load order</option></select></h3>

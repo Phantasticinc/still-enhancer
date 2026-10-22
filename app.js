@@ -1,8 +1,8 @@
 'use strict';
 const $=id=>document.getElementById(id);
 let origFile=null,origBytes=null,origHash='',origImg=null,loadedAt='',busy=false,pending=false;
-const ctl=['rot','frot','cl','cr','ct','cb','scale','method','bri','con','gam','lb','lw','gray','heq','dn','usa','usr'];
-const defaults={};ctl.forEach(k=>{const e=$(k);defaults[k]=e.type==='checkbox'?e.checked:e.value});
+const ctl=['rot','frot','cl','cr','ct','cb','scale','method','bri','con','gam','lb','lw','gray','heq','dn','usa','usr','wbr','wbg','wbb','clahe','rlo','rhi','glo','ghi','blo','bhi'];
+const defaults={};ctl.forEach(k=>{const e=$(k);defaults[k]=e.type==='checkbox'?e.checked:(isNaN(+e.value)?e.value:+e.value)});
 const params=()=>{const p={};ctl.forEach(k=>{const e=$(k);p[k]=e.type==='checkbox'?e.checked:(isNaN(+e.value)?e.value:+e.value)});return p};
 document.querySelectorAll('input[type=range]').forEach(r=>{const s=r.nextElementSibling;const u=()=>{if(s&&s.tagName==='SPAN')s.textContent=r.value};r.addEventListener('input',u);u()});
 async function sha256(buf){const h=await crypto.subtle.digest('SHA-256',buf);return[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('')}
@@ -10,7 +10,7 @@ const items=[];let cur=-1;
 const IF=['addr','lat','lng','dt','cam','clothing','vehicle','plate','marks','dir','tags','notes'];
 function use(it){origFile=it.file;origBytes=it.bytes;origHash=it.hash;origImg=it.img;loadedAt=it.loadedAt}
 $('file').addEventListener('change',async e=>{for(const f of e.target.files){const bytes=new Uint8Array(await f.arrayBuffer());
-  const it={id:items.length+1,file:f,bytes,hash:await sha256(bytes),img:await createImageBitmap(new Blob([bytes],{type:f.type})),loadedAt:new Date().toISOString(),params:{...defaults},meta:{}};
+  const it={id:items.length+1,file:f,bytes,hash:await sha256(bytes),img:await createImageBitmap(new Blob([bytes],{type:f.type}),{imageOrientation:'from-image'}),loadedAt:new Date().toISOString(),params:{...defaults},meta:{}};
   IF.forEach(k=>it.meta[k]='');items.push(it)}e.target.value='';select(items.length-1)});
 const label=(it,i)=>`#${i+1} ${it.file.name}${it.meta.dt?' · '+it.meta.dt.replace('T',' '):''}`;
 function select(i){cur=i;$('export').disabled=!items.length;const it=items[i];
@@ -51,7 +51,12 @@ function drawCompare(){for(const[s,c,inf]of[['cmpA','cA','cAi'],['cmpB','cB','cB
   e.width=after.width;e.height=after.height;e.getContext('2d').drawImage(after,0,0);$(inf).textContent=`${label(it,+$(s).value)} — ${it.meta.addr} ${it.meta.cam} — ${tagStr(it.meta)}`}}
 ctl.forEach(k=>$(k).addEventListener('input',render));
 $('reset').onclick=()=>{ctl.forEach(k=>{const e=$(k);if(e.type==='checkbox')e.checked=defaults[k];else e.value=defaults[k];e.dispatchEvent(new Event('input'))})};
-$('slider').addEventListener('input',()=>$('beforeWrap').style.width=$('slider').value+'%');
+function setSplit(v){v=Math.max(0,Math.min(100,v));$('slider').value=v;$('before').style.clipPath=`inset(0 ${100-v}% 0 0)`;$('divider').style.left=v+'%'}
+$('slider').addEventListener('input',()=>setSplit(+$('slider').value));
+{const c=$('cmp');let drag=false;const mv=e=>{const r=c.getBoundingClientRect();setSplit((e.clientX-r.left)/r.width*100)};
+ c.addEventListener('pointerdown',e=>{drag=true;c.setPointerCapture(e.pointerId);mv(e)});c.addEventListener('pointermove',e=>{if(drag)mv(e)});
+ c.addEventListener('pointerup',()=>drag=false);
+ c.addEventListener('touchstart',e=>{mv(e.touches[0])},{passive:true});c.addEventListener('touchmove',e=>{const t=e.touches[0];mv(t)},{passive:true});c.addEventListener('pointercancel',()=>drag=false)}
 function cv(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return c}
 function geometry(p){const r=p.rot*Math.PI/180+p.frot*Math.PI/180,W=origImg.width,H=origImg.height;
  const cw=Math.round(Math.abs(W*Math.cos(r))+Math.abs(H*Math.sin(r))),ch=Math.round(Math.abs(W*Math.sin(r))+Math.abs(H*Math.cos(r)));
@@ -70,6 +75,15 @@ function upscale(src,p){if(p.scale===1)return src;if(p.method==='lanczos')return
  const c=cv(src.width*p.scale,src.height*p.scale),x=c.getContext('2d');x.imageSmoothingEnabled=p.method!=='nearest';x.imageSmoothingQuality='high';x.drawImage(src,0,0,c.width,c.height);return c}
 function median(d,w,h,r){if(!r)return;const s=new Uint8ClampedArray(d),a=[];for(let y=0;y<h;y++)for(let x=0;x<w;x++)for(let ch=0;ch<3;ch++){a.length=0;
  for(let j=-r;j<=r;j++)for(let i=-r;i<=r;i++){const yy=Math.min(h-1,Math.max(0,y+j)),xx=Math.min(w-1,Math.max(0,x+i));a.push(s[(yy*w+xx)*4+ch])}a.sort((m,n)=>m-n);d[(y*w+x)*4+ch]=a[a.length>>1]}}
+function chan(d,p){const L=[[p.rlo,p.rhi,p.wbr],[p.glo,p.ghi,p.wbg],[p.blo,p.bhi,p.wbb]].map(([lo,hi,g])=>{const t=new Uint8ClampedArray(256);for(let i=0;i<256;i++)t[i]=(i-lo)/Math.max(1,hi-lo)*255*g;return t});
+ if(L.every((t,c)=>t.every((v,i)=>v===i)))return;for(let i=0;i<d.length;i+=4){d[i]=L[0][d[i]];d[i+1]=L[1][d[i+1]];d[i+2]=L[2][d[i+2]]}}
+function clahe(d,w,h,amt){if(!amt)return;const T=8,tw=Math.ceil(w/T),th=Math.ceil(h/T),n=w*h,Y=new Uint8Array(n);for(let i=0;i<n;i++)Y[i]=.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2];
+ const maps=[];for(let ty=0;ty<T;ty++)for(let tx=0;tx<T;tx++){const hist=new Float32Array(256);let cnt=0;for(let y=ty*th;y<Math.min(h,(ty+1)*th);y++)for(let x=tx*tw;x<Math.min(w,(tx+1)*tw);x++){hist[Y[y*w+x]]++;cnt++}
+  const lim=Math.max(1,(1+amt)*cnt/256);let ex=0;for(let i=0;i<256;i++)if(hist[i]>lim){ex+=hist[i]-lim;hist[i]=lim}const add=ex/256;const m=new Float32Array(256);let t=0;for(let i=0;i<256;i++){t+=hist[i]+add;m[i]=t/Math.max(1,cnt)*255}maps.push(m)}
+ const blend=Math.min(1,amt/2);for(let y=0;y<h;y++){const fy=Math.min(T-1,Math.max(0,(y+.5)/th-.5)),y0=Math.floor(fy),y1=Math.min(T-1,y0+1),ay=fy-y0;
+  for(let x=0;x<w;x++){const fx=Math.min(T-1,Math.max(0,(x+.5)/tw-.5)),x0=Math.floor(fx),x1=Math.min(T-1,x0+1),ax=fx-x0,v=Y[y*w+x];
+   const ny=(maps[y0*T+x0][v]*(1-ax)+maps[y0*T+x1][v]*ax)*(1-ay)+(maps[y1*T+x0][v]*(1-ax)+maps[y1*T+x1][v]*ax)*ay,o=v*(1-blend)+ny*blend,k=(o+1)/(v+1),i=(y*w+x)*4;
+   d[i]*=k;d[i+1]*=k;d[i+2]*=k}}}
 function tone(d,p){const lut=new Uint8ClampedArray(256),cf=(259*(p.con*1.275+255))/(255*(259-p.con*1.275));
  for(let i=0;i<256;i++){let v=Math.min(1,Math.max(0,(i-p.lb)/Math.max(1,p.lw-p.lb)));v=Math.pow(v,1/p.gam)*255;v=cf*(v-128)+128+p.bri*1.275;lut[i]=v}
  for(let i=0;i<d.length;i+=4){for(let c=0;c<3;c++)d[i+c]=lut[d[i+c]];if(p.gray){const g=.299*d[i]+.587*d[i+1]+.114*d[i+2];d[i]=d[i+1]=d[i+2]=g}}
@@ -80,13 +94,30 @@ function boxBlur(s,w,h,r){const o=new Float32Array(s.length),t=new Float32Array(
  for(let y=0;y<h;y++)for(let x=0;x<w;x++)for(let c=0;c<3;c++){let a=0,n=0;for(let i=-r;i<=r;i++){const xx=x+i;if(xx>=0&&xx<w){a+=s[(y*w+xx)*4+c];n++}}t[(y*w+x)*4+c]=a/n}
  for(let y=0;y<h;y++)for(let x=0;x<w;x++)for(let c=0;c<3;c++){let a=0,n=0;for(let j=-r;j<=r;j++){const yy=y+j;if(yy>=0&&yy<h){a+=t[(yy*w+x)*4+c];n++}}o[(y*w+x)*4+c]=a/n}return o}
 function unsharp(d,w,h,amt,r){if(!amt)return;const b=boxBlur(boxBlur(d,w,h,r).map(v=>v),w,h,r);for(let i=0;i<d.length;i++)if(i%4!==3)d[i]=d[i]+amt*(d[i]-b[i])}
-function process(p){const g=geometry(p),before=upscale(g,p),after=cv(before.width,before.height),x=after.getContext('2d');x.drawImage(before,0,0);
- const id=x.getImageData(0,0,after.width,after.height),d=id.data;median(d,after.width,after.height,p.dn);tone(d,p);unsharp(d,after.width,after.height,p.usa,p.usr);x.putImageData(id,0,0);return{before,after}}
-function render(){if(!origImg)return;if(busy){pending=true;return}busy=true;$('status').textContent='Processing…';
- setTimeout(()=>{try{const t=performance.now(),{before,after}=process(params());for(const[id,c]of[['before',before],['after',after]]){const e=$(id);e.width=c.width;e.height=c.height;e.getContext('2d').drawImage(c,0,0)}
-  $('before').style.width=$('after').getBoundingClientRect().width+'px';$('status').textContent=`Output ${after.width}×${after.height} · ${Math.round(performance.now()-t)} ms`}
-  catch(err){$('status').textContent='Error: '+err.message}busy=false;if(pending){pending=false;render()}},10)}
-window.addEventListener('resize',()=>$('before').style.width=$('after').getBoundingClientRect().width+'px');
+const MAX_AREA=16e6,PREVIEW=1400;
+function process(p,preview){let g=geometry(p),scale=p.scale,note='';
+ if(preview){const lim=PREVIEW/scale,k=Math.min(1,lim/Math.max(g.width,g.height));if(k<1){const c=cv(Math.max(1,Math.round(g.width*k)),Math.max(1,Math.round(g.height*k)));const x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(g,0,0,c.width,c.height);g=c}}
+ else while(scale>1&&g.width*g.height*scale*scale>MAX_AREA){scale/=2;note=`Upscale reduced from ${p.scale}x to ${scale}x: output would exceed ${MAX_AREA/1e6} MP canvas limit on mobile.`}
+ if(!preview&&g.width*g.height>MAX_AREA)note='Image exceeds mobile canvas limit; output may fail.';
+ const pp={...p,scale},before=upscale(g,pp),after=cv(before.width,before.height),x=after.getContext('2d');x.drawImage(before,0,0);
+ const W=after.width,H=after.height,id=x.getImageData(0,0,W,H),d=id.data;median(d,W,H,p.dn);chan(d,p);tone(d,p);clahe(d,W,H,p.clahe);unsharp(d,W,H,p.usa,p.usr);x.putImageData(id,0,0);return{before,after,note,scale}}
+let rt;function render(){clearTimeout(rt);rt=setTimeout(doRender,120)}
+function doRender(){if(!origImg)return;if(busy){pending=true;return}busy=true;$('status').textContent='Processing…';
+ setTimeout(()=>{try{const t=performance.now(),{before,after}=process(params(),true);for(const[id,c]of[['before',before],['after',after]]){const e=$(id);e.width=c.width;e.height=c.height;e.getContext('2d').drawImage(c,0,0)}
+  window.__renders=(window.__renders||0)+1;$('status').textContent=`Preview ${after.width}×${after.height} (full resolution on export) · ${Math.round(performance.now()-t)} ms`}
+  catch(err){$('status').textContent='Error: '+err.message}busy=false;if(pending){pending=false;doRender()}},30)}
+function autoEnhance(){if(!origImg)return;const g0=geometry(params()),k=Math.min(1,600/Math.max(g0.width,g0.height)),g=cv(Math.max(1,g0.width*k|0),Math.max(1,g0.height*k|0));g.getContext('2d').drawImage(g0,0,0,g.width,g.height);
+ const d=g.getContext('2d').getImageData(0,0,g.width,g.height).data,n=d.length/4,lv=[];
+ for(let c=0;c<3;c++){const h=new Array(256).fill(0);for(let i=c;i<d.length;i+=4)h[d[i]]++;let t=0,lo=0,hi=255;for(let i=0;i<256;i++){t+=h[i];if(t<=n*.005)lo=i}t=0;for(let i=255;i>=0;i--){t+=h[i];if(t<=n*.005)hi=i}if(hi-lo<10){lo=0;hi=255}lv.push([lo,hi])}
+ const m=[0,0,0];for(let i=0;i<d.length;i+=4)for(let c=0;c<3;c++)m[c]+=Math.min(255,Math.max(0,(d[i+c]-lv[c][0])/(lv[c][1]-lv[c][0])*255));for(let c=0;c<3;c++)m[c]/=n;
+ const avg=(m[0]+m[1]+m[2])/3,gain=m.map(v=>Math.min(2,Math.max(.5,avg/Math.max(1,v))));const lum=Math.min(.95,Math.max(.02,(.299*m[0]*gain[0]+.587*m[1]*gain[1]+.114*m[2]*gain[2])/255));
+ const gam=Math.min(3,Math.max(.4,Math.log(lum)/Math.log(.45))),dark=lum<.35;
+ const v={rlo:lv[0][0],rhi:lv[0][1],glo:lv[1][0],ghi:lv[1][1],blo:lv[2][0],bhi:lv[2][1],wbr:gain[0].toFixed(2),wbg:gain[1].toFixed(2),wbb:gain[2].toFixed(2),gam:gam.toFixed(2),clahe:dark?2:.8,dn:1,usa:.8,usr:1,lb:0,lw:255,bri:0,con:0,heq:false};
+ for(const[k2,val]of Object.entries(v)){const e=$(k2);if(e.type==='checkbox')e.checked=val;else e.value=val;const sp=e.nextElementSibling;if(sp&&sp.tagName==='SPAN')sp.textContent=e.value}
+ if(items[cur]){items[cur].params=params();items[cur].auto={applied_at:new Date().toISOString(),values:v}}
+ $('autoNote').textContent=`Auto: levels per channel (0.5% clip), gray-world WB, gamma ${v.gam}${dark?', dark frame → strong local contrast':''}, light denoise + sharpen. All values set on the sliders below.`;render()}
+$('autoBtn').onclick=autoEnhance;
+
 // minimal ZIP (store)
 const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c}return t})();
 const crc32=b=>{let c=~0;for(let i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return(~c)>>>0};
@@ -99,13 +130,13 @@ function zip(files){const enc=new TextEncoder(),parts=[],cen=[];let off=0;const 
  const cs=cen.reduce((a,b)=>a+b.length,0),e=new DataView(new ArrayBuffer(22));e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,cs,true);e.setUint32(16,off,true);
  return new Blob([...parts,...cen,new Uint8Array(e.buffer)],{type:'application/zip'})}
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-async function itemExport(it,n,dir){use(it);const p=it.params,{after}=process(p);const png=new Uint8Array(await(await new Promise(r=>after.toBlob(r,'image/png'))).arrayBuffer());
+async function itemExport(it,n,dir){use(it);const p=it.params,{after,note,scale}=process(p,false);const png=new Uint8Array(await(await new Promise(r=>after.toBlob(r,'image/png'))).arrayBuffer());
  const enhHash=await sha256(png),ext=(it.file.name.match(/\.[^.]+$/)||[''])[0];
  const log={still_number:n,observation:{...it.meta},
   original:{filename:it.file.name,stored_as:dir+'original'+ext,size_bytes:it.bytes.length,mime:it.file.type,width:it.img.width,height:it.img.height,last_modified:new Date(it.file.lastModified).toISOString(),loaded_at:it.loadedAt,sha256:it.hash},
-  enhanced:{stored_as:dir+'enhanced.png',width:after.width,height:after.height,size_bytes:png.length,sha256:enhHash},processing_order:ORDER,adjustments:p};
+  enhanced:{stored_as:dir+'enhanced.png',width:after.width,height:after.height,size_bytes:png.length,sha256:enhHash},processing_order:ORDER,adjustments:p,effective_scale:scale,size_note:note||null,auto_enhance:it.auto||null};
  return{log,files:[{name:dir+'original'+ext,data:it.bytes},{name:dir+'enhanced.png',data:png},{name:dir+'log.json',data:new TextEncoder().encode(JSON.stringify(log,null,2))}],png}}
-const ORDER=['rotate/crop','upscale','median denoise','levels','gamma','contrast','brightness','grayscale','histogram equalize','unsharp mask'];
+const ORDER=['rotate/crop','upscale','median denoise','per-channel levels','white balance gains','levels','gamma','contrast','brightness','grayscale','histogram equalize','CLAHE local contrast','unsharp mask'];
 const DISC='Enhanced images are derivatives for viewing only. Interpolation (upscaling) does not recover information absent from the original. Originals are preserved unaltered; verify with SHA-256. Observation tags are examiner annotations, not automated identification.';
 async function buildExport(){const save=cur,now=new Date().toISOString(),enc=new TextEncoder(),files=[],stills=[],imgs=[];
  const meta={case_number:$('m_case').value,examiner:$('m_exam').value,notes:$('m_notes').value};
@@ -129,4 +160,7 @@ window.__buildExport=buildExport;
 let dp;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();dp=e;if(!matchMedia('(display-mode: standalone)').matches)$('installBtn').hidden=false});
 $('installBtn').onclick=async()=>{if(!dp)return;dp.prompt();const r=await dp.userChoice;if(r.outcome==='accepted')$('installBtn').hidden=true;dp=null};
 window.addEventListener('appinstalled',()=>$('installBtn').hidden=true);
-if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+if('serviceWorker'in navigator){const show=w=>{$('updateBar').hidden=false;$('updateBtn').onclick=()=>w.postMessage('skip')};
+ navigator.serviceWorker.register('sw.js').then(r=>{if(r.waiting&&navigator.serviceWorker.controller)show(r.waiting);
+  r.addEventListener('updatefound',()=>{const w=r.installing;w.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)show(w)})});setInterval(()=>r.update(),3600e3)});
+ let rl=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!rl&&$('updateBar').hidden===false){rl=true;location.reload()}})}
