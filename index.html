@@ -1,0 +1,55 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data: https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline'; connect-src 'self'">
+<title>Still Enhancer</title><link rel="stylesheet" href="vendor/leaflet.css"><link rel="icon" href="favicon.ico"><link rel="manifest" href="manifest.json"><meta name="theme-color" content="#1b2a3a">
+<style>
+body{margin:0;font:14px system-ui;background:#111;color:#eee}header{background:#1b2a3a;padding:8px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+h1{font-size:17px;margin:0;flex:1}button,select,input,textarea{font:inherit;background:#222;color:#eee;border:1px solid #444;border-radius:6px;padding:6px}
+button{cursor:pointer;background:#2d4f6c}main{display:grid;grid-template-columns:320px 1fr;gap:10px;padding:10px}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+fieldset{border:1px solid #333;border-radius:8px;margin:0 0 8px}label{display:flex;justify-content:space-between;gap:6px;margin:4px 0;align-items:center}
+label input[type=range]{flex:1}.note{font-size:12px;color:#aaa}#cmp{position:relative;overflow:hidden;background:#000;touch-action:none;user-select:none}
+#cmp canvas{display:block;max-width:100%;height:auto}#before{position:absolute;left:0;top:0;width:100%}#beforeWrap{position:absolute;inset:0;overflow:hidden;width:50%;border-right:2px solid #6cf}
+#hash{word-break:break-all;font-family:monospace;font-size:11px}.warn{color:#fc6}</style></head><body>
+<header><h1>Still Enhancer</h1><button id="installBtn" hidden>Install to phone</button>
+<input type="file" id="file" accept="image/*" multiple><button id="export" disabled>Export ZIP</button></header>
+<p class="note" style="padding:0 12px">Runs entirely on this device; images are never uploaded. Image enhancement only — no identification features.</p>
+<main><section>
+<fieldset><legend>Case</legend><label>Case #<input id="m_case"></label><label>Examiner<input id="m_exam"></label>
+<textarea id="m_notes" rows="2" style="width:95%" placeholder="Case notes"></textarea></fieldset>
+<fieldset><legend>This still <select id="cur"></select></legend>
+<label>Address<input id="i_addr"></label><label>Lat<input id="i_lat" inputmode="decimal"></label><label>Lng<input id="i_lng" inputmode="decimal"></label>
+<label>Date/time<input id="i_dt" type="datetime-local"></label><label>Camera source<input id="i_cam" placeholder="Ring, store DVR…"></label>
+<label>Clothing<input id="i_clothing"></label><label>Vehicle<input id="i_vehicle"></label><label>Plate (partial)<input id="i_plate"></label>
+<label>Marks/tattoos<input id="i_marks"></label><label>Direction<input id="i_dir" placeholder="N/S/E/W…"></label><label>Other tags<input id="i_tags"></label>
+<textarea id="i_notes" rows="2" style="width:95%" placeholder="Still notes"></textarea><button id="removeItem">Remove this still</button></fieldset>
+<fieldset><legend>Original</legend><div id="hash">No image loaded</div><div id="dims" class="note"></div></fieldset>
+<fieldset><legend>Crop / rotate</legend>
+<label>Rotate<select id="rot"><option>0</option><option>90</option><option>180</option><option>270</option></select></label>
+<label>Fine rotate°<input id="frot" type="range" min="-15" max="15" step="0.5" value="0"><span></span></label>
+<label>Crop L %<input id="cl" type="range" min="0" max="49" value="0"><span></span></label><label>Crop R %<input id="cr" type="range" min="0" max="49" value="0"><span></span></label>
+<label>Crop T %<input id="ct" type="range" min="0" max="49" value="0"><span></span></label><label>Crop B %<input id="cb" type="range" min="0" max="49" value="0"><span></span></label></fieldset>
+<fieldset><legend>Upscale</legend><label>Factor<select id="scale"><option>1</option><option>2</option><option>4</option></select></label>
+<label>Method<select id="method"><option value="lanczos">Lanczos-3</option><option value="bicubic">Bicubic (browser)</option><option value="nearest">Nearest</option></select></label>
+<p class="note">Classical interpolation only. No AI upscaler is included (it may invent detail and is not evidentiary).</p></fieldset>
+<fieldset><legend>Tone</legend>
+<label>Brightness<input id="bri" type="range" min="-100" max="100" value="0"><span></span></label>
+<label>Contrast<input id="con" type="range" min="-100" max="100" value="0"><span></span></label>
+<label>Gamma<input id="gam" type="range" min="0.2" max="3" step="0.05" value="1"><span></span></label>
+<label>Levels black<input id="lb" type="range" min="0" max="254" value="0"><span></span></label>
+<label>Levels white<input id="lw" type="range" min="1" max="255" value="255"><span></span></label>
+<label>Grayscale<input id="gray" type="checkbox"></label><label>Histogram equalize<input id="heq" type="checkbox"></label></fieldset>
+<fieldset><legend>Detail</legend>
+<label>Denoise (median r)<input id="dn" type="range" min="0" max="3" value="0"><span></span></label>
+<label>Unsharp amount<input id="usa" type="range" min="0" max="3" step="0.1" value="0"><span></span></label>
+<label>Unsharp radius<input id="usr" type="range" min="1" max="5" value="1"><span></span></label></fieldset>
+<button id="reset">Reset adjustments</button></section>
+<section><div id="cmp"><canvas id="after"></canvas><div id="beforeWrap"><canvas id="before"></canvas></div></div>
+<label>Before / after<input id="slider" type="range" min="0" max="100" value="50"></label><div id="status" class="note"></div></section></main>
+<section id="board" style="padding:10px"><h2>Case board</h2>
+<h3>Timeline <select id="sortBy"><option value="dt">by date/time</option><option value="cam">by camera</option><option value="addr">by location</option><option value="idx">by load order</option></select></h3>
+<div style="overflow:auto"><table id="timeline" style="width:100%;border-collapse:collapse"></table></div>
+<h3>Map of sightings</h3><label style="justify-content:flex-start"><input type="checkbox" id="onlineTiles"> Use online map tiles (OpenStreetMap — sends viewed map area over the network; off = offline plot)</label>
+<div id="map" style="height:320px;background:#1a1a1a;border-radius:8px"></div>
+<h3>Compare</h3><select id="cmpA"></select> vs <select id="cmpB"></select>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><div><canvas id="cA" style="max-width:100%"></canvas><div id="cAi" class="note"></div></div><div><canvas id="cB" style="max-width:100%"></canvas><div id="cBi" class="note"></div></div></div></section>
+<script src="vendor/leaflet.js"></script><script src="app.js"></script></body></html>
