@@ -1,7 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
 let origFile=null,origBytes=null,origHash='',origImg=null,loadedAt='',busy=false,pending=false;
-const ctl=['rot','frot','cl','cr','ct','cb','scale','method','bri','con','gam','lb','lw','gray','heq','dn','usa','usr','wbr','wbg','wbb','clahe','rlo','rhi','glo','ghi','blo','bhi'];
+const ctl=['upmode','rot','frot','cl','cr','ct','cb','scale','method','bri','con','gam','lb','lw','gray','heq','dn','usa','usr','wbr','wbg','wbb','clahe','rlo','rhi','glo','ghi','blo','bhi'];
 const defaults={};ctl.forEach(k=>{const e=$(k);defaults[k]=e.type==='checkbox'?e.checked:(isNaN(+e.value)?e.value:+e.value)});
 const params=()=>{const p={};ctl.forEach(k=>{const e=$(k);p[k]=e.type==='checkbox'?e.checked:(isNaN(+e.value)?e.value:+e.value)});return p};
 document.querySelectorAll('input[type=range]').forEach(r=>{const s=r.nextElementSibling;const u=()=>{if(s&&s.tagName==='SPAN')s.textContent=r.value};r.addEventListener('input',u);u()});
@@ -17,7 +17,7 @@ function select(i){cur=i;$('export').disabled=!items.length;const it=items[i];
   if(!it){origImg=null;$('hash').textContent='No image loaded';$('dims').textContent='';refreshBoard();return}use(it);
   ctl.forEach(k=>{const e=$(k);if(e.type==='checkbox')e.checked=it.params[k];else e.value=it.params[k];const sp=e.nextElementSibling;if(sp&&sp.tagName==='SPAN')sp.textContent=e.value});
   IF.forEach(k=>$('i_'+k).value=it.meta[k]);
-  $('hash').textContent='SHA-256: '+origHash;$('dims').textContent=`${origFile.name} · ${origImg.width}×${origImg.height} · ${origFile.size} bytes · loaded ${loadedAt}`;refreshBoard();render()}
+  $('hash').textContent='SHA-256: '+origHash;$('dims').textContent=`${origFile.name} · ${origImg.width}×${origImg.height} · ${origFile.size} bytes · loaded ${loadedAt}`;refreshBoard();syncMode();render()}
 IF.forEach(k=>$('i_'+k).addEventListener('input',()=>{if(items[cur]){items[cur].meta[k]=$('i_'+k).value;refreshBoard(k!=='notes')}}));
 ctl.forEach(k=>$(k).addEventListener('input',()=>{if(items[cur])items[cur].params=params()}));
 $('cur').onchange=()=>select(+$('cur').value);
@@ -94,12 +94,45 @@ function boxBlur(s,w,h,r){const o=new Float32Array(s.length),t=new Float32Array(
  for(let y=0;y<h;y++)for(let x=0;x<w;x++)for(let c=0;c<3;c++){let a=0,n=0;for(let i=-r;i<=r;i++){const xx=x+i;if(xx>=0&&xx<w){a+=s[(y*w+xx)*4+c];n++}}t[(y*w+x)*4+c]=a/n}
  for(let y=0;y<h;y++)for(let x=0;x<w;x++)for(let c=0;c<3;c++){let a=0,n=0;for(let j=-r;j<=r;j++){const yy=y+j;if(yy>=0&&yy<h){a+=t[(yy*w+x)*4+c];n++}}o[(y*w+x)*4+c]=a/n}return o}
 function unsharp(d,w,h,amt,r){if(!amt)return;const b=boxBlur(boxBlur(d,w,h,r).map(v=>v),w,h,r);for(let i=0;i<d.length;i++)if(i%4!==3)d[i]=d[i]+amt*(d[i]-b[i])}
-const MAX_AREA=16e6,PREVIEW=1400;
+const MAX_AREA=16e6,PREVIEW=1400,AI_MAX_IN=1e6;
+const MODEL={name:'realesr-general-x4v3',architecture:'SRVGGNetCompact (Real-ESRGAN)',source:'https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0',license:'BSD-3-Clause (Real-ESRGAN, (c) 2021 Xintao Wang)',
+ weights_sha256:'8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292',onnx_file:'models/realesr-general-x4v3.onnx',onnx_sha256:'30908bdc20114e5b0c36a6ba0568f508d221b18013649c53529ffa8cdad51418',
+ conversion:'PyTorch 2.x -> ONNX opset 17, fp32, unmodified weights',runtime:'onnxruntime-web 1.20.1 (MIT)',native_scale:4};
+const geoKey=p=>JSON.stringify([p.rot,p.frot,p.cl,p.cr,p.ct,p.cb,p.upmode]);
+function aiFor(p){if(p.upmode==='classical')return null;const it=items.find(i=>i.img===origImg);return it&&it.ai&&it.ai.key===geoKey(p)?it.ai:null}
+let worker=null,modelBuf=null,aiBusy=false;
+async function loadModel(onp){if(modelBuf)return modelBuf;const r=await fetch(MODEL.onnx_file);const tot=+r.headers.get('content-length')||4866375,rd=r.body.getReader(),ch=[];let n=0;
+ for(;;){const{done,value}=await rd.read();if(done)break;ch.push(value);n+=value.length;onp(n/tot)}const b=new Uint8Array(n);let o=0;for(const c of ch){b.set(c,o);o+=c.length}
+ const hsh=await sha256(b);if(hsh!==MODEL.onnx_sha256)throw new Error('Model hash mismatch');modelBuf=b;return b}
+function wcall(msg,onmsg,transfer){return new Promise((res,rej)=>{worker.onmessage=e=>{const m=e.data;if(m.type==='error')rej(new Error(m.message));else if(onmsg(m))res(m)};worker.postMessage(msg,transfer||[])})}
+async function runAI(){const it=items[cur];if(!it||aiBusy)return;const p=params();if(p.upmode==='classical')return;aiBusy=true;
+ const st=$('aiStatus'),pr=$('aiProg');pr.hidden=false;$('aiCancel').hidden=false;$('aiRun').disabled=true;
+ try{st.textContent='Loading model…';const buf=await loadModel(f=>{pr.value=f*.5});
+  if(!worker)worker=new Worker('sr-worker.js');st.textContent='Starting AI engine (first run downloads ~22 MB runtime)…';
+  const ready=await wcall({cmd:'init',model:buf,allowGpu:!/wasm/.test(location.hash)},m=>m.type==='ready');
+  let g=geometry(p),note='';if(g.width*g.height>AI_MAX_IN){const k=Math.sqrt(AI_MAX_IN/(g.width*g.height)),c=cv(Math.round(g.width*k),Math.round(g.height*k));c.getContext('2d').imageSmoothingQuality='high';c.getContext('2d').drawImage(g,0,0,c.width,c.height);note=`AI input downscaled from ${g.width}×${g.height} to ${c.width}×${c.height} (1 MP limit) — crop tighter for more detail.`;g=c}
+  const data=g.getContext('2d').getImageData(0,0,g.width,g.height).data,tile=ready.ep==='webgpu'?192:128;
+  st.textContent=`Upscaling on ${ready.ep==='webgpu'?'GPU (WebGPU)':'CPU (WASM)'}…`;pr.value=0;
+  const r=await wcall({cmd:'run',w:g.width,h:g.height,data,tile,ov:12},m=>{if(m.type==='progress'){pr.value=m.done/m.total;st.textContent=`AI tile ${m.done}/${m.total} · ${(m.ms/1000).toFixed(1)} s (${ready.ep})`;return false}return m.type==='done'||m.type==='cancelled'},[data.buffer]);
+  if(r.type==='cancelled'){st.textContent='Cancelled.';return}
+  let c=cv(r.W,r.H);c.getContext('2d').putImageData(new ImageData(r.data,r.W,r.H),0,0);const factor=p.upmode==='ai2'?2:4;
+  if(factor===2){const c2=cv(g.width*2,g.height*2),x=c2.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(c,0,0,c2.width,c2.height);c=c2}
+  it.ai={key:geoKey(p),canvas:c,factor,note,info:{...MODEL,mode:p.upmode,output_factor:factor,input_size:[g.width,g.height],output_size:[c.width,c.height],execution_provider:r.ep,tile_px:tile,tile_overlap_px:12,tiles:r.tiles,inference_ms:Math.round(r.ms),run_at:new Date().toISOString(),input_note:note||null,
+   label:'AI upscale generates detail — for leads, not evidence; original preserved.'}};
+  st.textContent=`Done: ${c.width}×${c.height} in ${(r.ms/1000).toFixed(1)} s on ${r.ep}. ${note}`;render()}
+ catch(err){st.textContent='AI error: '+err.message}finally{aiBusy=false;$('aiCancel').hidden=true;$('aiRun').disabled=false;pr.hidden=true}}
+$('aiRun').onclick=runAI;$('aiCancel').onclick=()=>worker&&worker.postMessage({cmd:'cancel'});
+function syncMode(){const ai=$('upmode').value!=='classical';$('aiBox').hidden=!ai;$('classicalBox').hidden=ai;const it=items[cur];
+ if(ai&&it&&!aiFor(params()))$('aiStatus').textContent='Not run yet for this crop/mode — preview shows the original size. Tap "Run AI upscale".'}
+$('upmode').addEventListener('input',syncMode);$('upmode').addEventListener('change',()=>$('upmode').dispatchEvent(new Event('input')));
 function process(p,preview){let g=geometry(p),scale=p.scale,note='';
- if(preview){const lim=PREVIEW/scale,k=Math.min(1,lim/Math.max(g.width,g.height));if(k<1){const c=cv(Math.max(1,Math.round(g.width*k)),Math.max(1,Math.round(g.height*k)));const x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(g,0,0,c.width,c.height);g=c}}
- else while(scale>1&&g.width*g.height*scale*scale>MAX_AREA){scale/=2;note=`Upscale reduced from ${p.scale}x to ${scale}x: output would exceed ${MAX_AREA/1e6} MP canvas limit on mobile.`}
+ if(preview){const lim=PREVIEW/(p.upmode==='classical'?scale:1),k=Math.min(1,lim/Math.max(g.width,g.height));if(k<1){const c=cv(Math.max(1,Math.round(g.width*k)),Math.max(1,Math.round(g.height*k)));const x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(g,0,0,c.width,c.height);g=c}}
+ else if(p.upmode==='classical')while(scale>1&&g.width*g.height*scale*scale>MAX_AREA){scale/=2;note=`Upscale reduced from ${p.scale}x to ${scale}x: output would exceed ${MAX_AREA/1e6} MP canvas limit on mobile.`}
  if(!preview&&g.width*g.height>MAX_AREA)note='Image exceeds mobile canvas limit; output may fail.';
- const pp={...p,scale},before=upscale(g,pp),after=cv(before.width,before.height),x=after.getContext('2d');x.drawImage(before,0,0);
+ let before,base;const ai=aiFor(p);
+ if(ai){note=ai.note||note;if(preview){const k=Math.min(1,PREVIEW/Math.max(ai.canvas.width,ai.canvas.height));before=cv(Math.max(1,Math.round(ai.canvas.width*k)),Math.max(1,Math.round(ai.canvas.height*k)));const bx=before.getContext('2d');bx.imageSmoothingQuality='high';bx.drawImage(ai.canvas,0,0,before.width,before.height)}else before=ai.canvas;scale=ai.factor}
+ base=before;if(ai){before=cv(base.width,base.height);const bx=before.getContext('2d');bx.imageSmoothingQuality='high';bx.drawImage(g,0,0,base.width,base.height)}
+ else{if(p.upmode!=='classical'){scale=1;note=note||'AI upscale selected but not run; exported at 1x.'}before=upscale(g,{...p,scale});base=before}const after=cv(base.width,base.height),x=after.getContext('2d');x.drawImage(base,0,0);
  const W=after.width,H=after.height,id=x.getImageData(0,0,W,H),d=id.data;median(d,W,H,p.dn);chan(d,p);tone(d,p);clahe(d,W,H,p.clahe);unsharp(d,W,H,p.usa,p.usr);x.putImageData(id,0,0);return{before,after,note,scale}}
 let rt;function render(){clearTimeout(rt);rt=setTimeout(doRender,120)}
 function doRender(){if(!origImg)return;if(busy){pending=true;return}busy=true;$('status').textContent='Processing…';
@@ -116,7 +149,7 @@ function autoEnhance(){if(!origImg)return;const g0=geometry(params()),k=Math.min
  for(const[k2,val]of Object.entries(v)){const e=$(k2);if(e.type==='checkbox')e.checked=val;else e.value=val;const sp=e.nextElementSibling;if(sp&&sp.tagName==='SPAN')sp.textContent=e.value}
  if(items[cur]){items[cur].params=params();items[cur].auto={applied_at:new Date().toISOString(),values:v}}
  $('autoNote').textContent=`Auto: levels per channel (0.5% clip), gray-world WB, gamma ${v.gam}${dark?', dark frame → strong local contrast':''}, light denoise + sharpen. All values set on the sliders below.`;render()}
-$('autoBtn').onclick=autoEnhance;
+$('autoBtn').onclick=async()=>{autoEnhance();if($('autoAI').checked&&origImg){const g=geometry(params());$('upmode').value=g.width*g.height<=250e3?'ai4':'ai2';$('upmode').dispatchEvent(new Event('input'));if(items[cur])items[cur].params=params();await runAI()}};
 
 // minimal ZIP (store)
 const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c}return t})();
@@ -134,9 +167,9 @@ async function itemExport(it,n,dir){use(it);const p=it.params,{after,note,scale}
  const enhHash=await sha256(png),ext=(it.file.name.match(/\.[^.]+$/)||[''])[0];
  const log={still_number:n,observation:{...it.meta},
   original:{filename:it.file.name,stored_as:dir+'original'+ext,size_bytes:it.bytes.length,mime:it.file.type,width:it.img.width,height:it.img.height,last_modified:new Date(it.file.lastModified).toISOString(),loaded_at:it.loadedAt,sha256:it.hash},
-  enhanced:{stored_as:dir+'enhanced.png',width:after.width,height:after.height,size_bytes:png.length,sha256:enhHash},processing_order:ORDER,adjustments:p,effective_scale:scale,size_note:note||null,auto_enhance:it.auto||null};
+  enhanced:{stored_as:dir+'enhanced.png',width:after.width,height:after.height,size_bytes:png.length,sha256:enhHash},processing_order:ORDER,adjustments:p,effective_scale:scale,size_note:note||null,auto_enhance:it.auto||null,ai_upscale:(aiFor(p)||{}).info||null};
  return{log,files:[{name:dir+'original'+ext,data:it.bytes},{name:dir+'enhanced.png',data:png},{name:dir+'log.json',data:new TextEncoder().encode(JSON.stringify(log,null,2))}],png}}
-const ORDER=['rotate/crop','upscale','median denoise','per-channel levels','white balance gains','levels','gamma','contrast','brightness','grayscale','histogram equalize','CLAHE local contrast','unsharp mask'];
+const ORDER=['rotate/crop','upscale (classical or AI Real-ESRGAN)','median denoise','per-channel levels','white balance gains','levels','gamma','contrast','brightness','grayscale','histogram equalize','CLAHE local contrast','unsharp mask'];
 const DISC='Enhanced images are derivatives for viewing only. Interpolation (upscaling) does not recover information absent from the original. Originals are preserved unaltered; verify with SHA-256. Observation tags are examiner annotations, not automated identification.';
 async function buildExport(){const save=cur,now=new Date().toISOString(),enc=new TextEncoder(),files=[],stills=[],imgs=[];
  const meta={case_number:$('m_case').value,examiner:$('m_exam').value,notes:$('m_notes').value};

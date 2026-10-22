@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data: https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline'; connect-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; img-src 'self' blob: data: https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline'; connect-src 'self'">
 <title>Still Enhancer</title><link rel="stylesheet" href="vendor/leaflet.css"><link rel="icon" href="favicon.ico"><link rel="manifest" href="manifest.json"><meta name="theme-color" content="#1b2a3a">
 <style>
 body{margin:0;font:14px system-ui;background:#111;color:#eee}header{background:#1b2a3a;padding:8px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -13,7 +13,7 @@ label input[type=range]{flex:1}.note{font-size:12px;color:#aaa}#cmp{position:rel
 <div id="updateBar" hidden>Update available. <button id="updateBtn">Reload</button></div><header><h1>Still Enhancer</h1><button id="installBtn" hidden>Install to phone</button>
 <input type="file" id="file" accept="image/*" multiple><button id="export" disabled>Export ZIP</button></header>
 <p class="note" style="padding:0 12px">Runs entirely on this device; images are never uploaded. Image enhancement only — no identification features.</p>
-<main><section><button id="autoBtn">✨ Auto enhance</button><div id="autoNote" class="note"></div>
+<main><section><button id="autoBtn">✨ Auto enhance</button><label style="justify-content:flex-start;gap:8px"><input type="checkbox" id="autoAI"> Also AI-upscale the crop</label><div id="autoNote" class="note"></div>
 
 <fieldset><legend>Case</legend><label>Case #<input id="m_case"></label><label>Examiner<input id="m_exam"></label>
 <textarea id="m_notes" rows="2" style="width:95%" placeholder="Case notes"></textarea></fieldset>
@@ -29,9 +29,14 @@ label input[type=range]{flex:1}.note{font-size:12px;color:#aaa}#cmp{position:rel
 <label>Fine rotate°<input id="frot" type="range" min="-15" max="15" step="0.5" value="0"><span></span></label>
 <label>Crop L %<input id="cl" type="range" min="0" max="49" value="0"><span></span></label><label>Crop R %<input id="cr" type="range" min="0" max="49" value="0"><span></span></label>
 <label>Crop T %<input id="ct" type="range" min="0" max="49" value="0"><span></span></label><label>Crop B %<input id="cb" type="range" min="0" max="49" value="0"><span></span></label></fieldset>
-<fieldset><legend>Upscale</legend><label>Factor<select id="scale"><option>1</option><option>2</option><option>4</option></select></label>
-<label>Method<select id="method"><option value="lanczos">Lanczos-3</option><option value="bicubic">Bicubic (browser)</option><option value="nearest">Nearest</option></select></label>
-<p class="note">Classical interpolation only. No AI upscaler is included (it may invent detail and is not evidentiary).</p></fieldset>
+<fieldset><legend>Upscale</legend>
+<label>Mode<select id="upmode"><option value="classical">Classical</option><option value="ai2">AI 2x (Real-ESRGAN)</option><option value="ai4">AI 4x (Real-ESRGAN)</option></select></label>
+<div id="classicalBox"><label>Factor<select id="scale"><option>1</option><option>2</option><option>4</option></select></label>
+<label>Method<select id="method"><option value="lanczos">Lanczos-3</option><option value="bicubic">Bicubic (browser)</option><option value="nearest">Nearest</option></select></label></div>
+<div id="aiBox" hidden><p class="warn"><b>AI upscale generates detail — for leads, not evidence; original preserved.</b></p>
+<p class="note">Runs on this device (WebGPU or CPU). Crop to the area of interest first — input is limited to 1 MP; larger crops are downscaled. First use downloads a 5 MB model + 22 MB runtime, then works offline.</p>
+<button id="aiRun">Run AI upscale</button> <button id="aiCancel" hidden>Cancel</button>
+<progress id="aiProg" max="1" value="0" style="width:100%" hidden></progress><div id="aiStatus" class="note"></div></div></fieldset>
 <fieldset><legend>Tone</legend>
 <label>Brightness<input id="bri" type="range" min="-100" max="100" value="0"><span></span></label>
 <label>Contrast<input id="con" type="range" min="-100" max="100" value="0"><span></span></label>
